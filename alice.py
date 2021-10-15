@@ -61,7 +61,7 @@ def createCircuit(routers):
   # convert dict to list
   circuit = [(k, v) for k, v in routers.items()]
   # shuffle list to achieve random order of routers
-  # shuffle(circuit)
+  shuffle(circuit)
   # start DH key exchange with first router
   server, port = tuple(circuit[0][0].split(':'))
   ssocket = connectSocket(server, int(port))
