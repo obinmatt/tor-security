@@ -5,6 +5,7 @@ from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Util import Padding
 from Crypto.Random import get_random_bytes
 from Crypto.Random.random import getrandbits
+from base64 import b64encode, b64decode
 from hashlib import sha256
 from threading import Thread
 
@@ -79,18 +80,19 @@ class Router:
     return plainText.decode()
 
   def encryptAES(self, hsk, data):
-    iv = get_random_bytes(16)
     key = bytes.fromhex(hsk.hexdigest())
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    return cipher.encrypt(Padding.pad(pickle.dumps(data), 16)), iv
+    cipher = AES.new(key, AES.MODE_CTR)
+    ct_bytes = cipher.encrypt(pickle.dumps(data))
+    nonce = b64encode(cipher.nonce).decode('utf-8')
+    ct = b64encode(ct_bytes).decode('utf-8')
+    return ct, nonce
 
   def decryptAES(self, hsk, data):
-    cipherText = data['cipherText']
-    iv = data['iv']
     key = bytes.fromhex(hsk.hexdigest())
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    plainText = cipher.decrypt(cipherText)
-    return Padding.unpad(plainText, 16)
+    nonce = b64decode(data['nonce'])
+    ct = b64decode(data['cipherText'])
+    cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
+    return cipher.decrypt(ct)
 
   def handleClient(self, connection, address):
     print(f"New connection - {address}")
@@ -134,14 +136,10 @@ class Router:
           obj = pickle.loads(msg)
           objClass = obj.__class__.__name__
           if objClass == 'Relay':
-            # encrypt data using hsk
-            key = bytes.fromhex(hsk.hexdigest())
-            iv = get_random_bytes(16)
-            cipher = AES.new(key, AES.MODE_CBC, iv)
-            cipherText = cipher.encrypt(Padding.pad(pickle.dumps(obj.data), 16))
+            cipherText, nonce = self.encryptAES(hsk, obj.data)
             data = {
               'cipherText': cipherText,
-              'iv': iv
+              'nonce': nonce
             }
             # send relay obj back to connection
             msg = Relay(circID=circID, data=pickle.dumps(data))
@@ -171,14 +169,10 @@ class Router:
               'server': '',
               'value': gy
             }
-            # encrypt innerData using hsk
-            key = bytes.fromhex(hsk.hexdigest())
-            iv = get_random_bytes(16)
-            cipher = AES.new(key, AES.MODE_CBC, iv)
-            cipherText = cipher.encrypt(Padding.pad(pickle.dumps(innerData), 16))
+            cipherText, nonce = self.encryptAES(hsk, innerData)
             data = {
               'cipherText': cipherText,
-              'iv': iv
+              'nonce': nonce
             }
             # send relay obj back to connection
             msg = Relay(circID=1, data=pickle.dumps(data))
@@ -187,7 +181,6 @@ class Router:
             connection.send(size)
             time.sleep(1)
             connection.send(msg)
-            # connection.send(pickle.dumps(msg))
           elif data['cmd'] == 'Begin':
             # send request to web server
             url = data['server']
@@ -198,10 +191,10 @@ class Router:
               'data': r.text
             }
             # encrypt innerData using hsk
-            cipherText, iv = self.encryptAES(hsk, innerData)
+            cipherText, nonce = self.encryptAES(hsk, innerData)
             data = {
               'cipherText': cipherText,
-              'iv': iv
+              'nonce': nonce
             }
             # send relay obj back to connection
             msg = Relay(circID=circID, data=pickle.dumps(data))

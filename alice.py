@@ -6,6 +6,7 @@ from Crypto.Util import Padding
 from Crypto.Random import get_random_bytes
 from Crypto.Random.random import getrandbits
 from router import GetRouters, Create, Created, Relay
+from base64 import b64encode, b64decode
 from hashlib import sha256
 from random import shuffle
 
@@ -32,19 +33,20 @@ def getRouters():
   ssocket.close()
   return routers
 
-def encryptAES(sk, data):
-  iv = get_random_bytes(16)
-  key = bytes.fromhex(sk.hexdigest())
-  cipher = AES.new(key, AES.MODE_CBC, iv)
-  return cipher.encrypt(Padding.pad(pickle.dumps(data), 16)), iv
+def encryptAES(hsk, data):
+  key = bytes.fromhex(hsk.hexdigest())
+  cipher = AES.new(key, AES.MODE_CTR)
+  ct_bytes = cipher.encrypt(pickle.dumps(data))
+  nonce = b64encode(cipher.nonce).decode('utf-8')
+  ct = b64encode(ct_bytes).decode('utf-8')
+  return ct, nonce
 
 def decryptAES(hsk, data):
-  cipherText = data['cipherText']
-  iv = data['iv']
   key = bytes.fromhex(hsk.hexdigest())
-  cipher = AES.new(key, AES.MODE_CBC, iv)
-  plainText = cipher.decrypt(cipherText)
-  return Padding.unpad(plainText, 16)
+  nonce = b64decode(data['nonce'])
+  ct = b64decode(data['cipherText'])
+  cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
+  return cipher.decrypt(ct)
 
 def createSocket(server, port):
   ssocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -99,14 +101,10 @@ def createCircuit(routers):
       'server': circuit[1][0],
       'value': cipherText
     }
-    # encrypt innerData using hsk1
-    iv = get_random_bytes(16)
-    key = bytes.fromhex(hsk1.hexdigest())
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    cipherText = cipher.encrypt(Padding.pad(pickle.dumps(innerData), 16))
+    cipherText, nonce = encryptAES(hsk1, innerData)
     data = {
       'cipherText': cipherText,
-      'iv': iv
+      'nonce': nonce
     }
     # send relay obj
     msg = Relay(circID=1, data=pickle.dumps(data))
@@ -144,11 +142,10 @@ def createCircuit(routers):
         }
         # encrypt innerData using shared key(s)
         for x in reversed(HSK):
-          iv = get_random_bytes(16)
-          innerData, iv = encryptAES(x, innerData)
+          innerData, nonce = encryptAES(x, innerData)
           innerData = {
             'cipherText': innerData,
-            'iv': iv
+            'nonce': nonce
           }
         data = innerData
         # create relay message
@@ -185,11 +182,10 @@ def sendRequest(url, ssocket, circuit):
   }
   # encrypt innerData using shared key(s)
   for x in reversed(HSK):
-    iv = get_random_bytes(16)
-    innerData, iv = encryptAES(x, innerData)
+    innerData, nonce = encryptAES(x, innerData)
     innerData = {
       'cipherText': innerData,
-      'iv': iv
+      'nonce': nonce
     }
   data = innerData
   # create relay message
