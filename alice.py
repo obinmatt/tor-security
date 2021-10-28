@@ -8,7 +8,7 @@ from Crypto.Random.random import getrandbits
 from router import GetRouters, Create, Created, Relay
 from base64 import b64encode, b64decode
 from hashlib import sha256
-from random import shuffle
+from random import sample
 
 PORT = 9005
 SERVER = 'localhost'
@@ -62,8 +62,8 @@ def connectSocket(server, port):
 def createCircuit(routers):
   # convert dict to list
   circuit = [(k, v) for k, v in routers.items()]
-  # shuffle list to achieve random order of routers
-  shuffle(circuit)
+  # use sample to get random 3 routers from list
+  circuit = sample(circuit, 3)
   # start DH key exchange with first router
   server, port = tuple(circuit[0][0].split(':'))
   ssocket = connectSocket(server, int(port))
