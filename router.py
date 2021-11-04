@@ -80,7 +80,7 @@ class Router:
     return cipher.decrypt(ct)
 
   def handleClient(self, connection, address):
-    print(f"New connection - {address}")
+    print('New connection - {}'.format(address))
     p = 0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485
     g = 2
     y = getrandbits(1024)
@@ -92,7 +92,6 @@ class Router:
       if not msg: break
       cmd = msg[2:3]
       if cmd == b'C':
-        print('Create Recv')
         circID = msg[0:2]
         # calc shared key
         gx = int(self.decryptRSA(msg[3:]))
@@ -194,12 +193,12 @@ class Router:
     ip = self.ip
     port = self.port
     ssocket = self.createSocket(ip, port)
-    print(f"Server is listening on {ip}:{port}")
+    print('Server is listening on {}:{}'.format(ip, port))
     while True:
       connection, address = ssocket.accept()
       thread = threading.Thread(target=self.handleClient, args=(connection, address))
       thread.start()
-      print(f"Number of connections: {threading.activeCount() - 1}")
+      print('Number of connections: {}'.format(threading.activeCount() - 1))
     ssocket.close()
   
 def main(ip, port):

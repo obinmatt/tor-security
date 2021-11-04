@@ -189,7 +189,7 @@ def sendRequest(url, ssocket, circuit):
   # recv message
   msg = ssocket.recv(4096)
   size = int(msg.decode())
-  print(f'Size of relay contained webpage: {size}')
+  print('Size of relay contained webpage: {}'.format(size))
   msg = ssocket.recv(size)
   data = msg[3:]
   # decrypt response
