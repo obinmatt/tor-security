@@ -17,21 +17,6 @@ class Register:
     self.addr = f'{ip}:{port}'
     self.pubKey = pubKey
 
-class Create:
-  def __init__(self, circID, data):
-    self.circID = circID
-    self.data = data
-
-class Created:
-  def __init__(self, circID, data):
-    self.circID = circID
-    self.data = data
-
-class Relay:
-  def __init__(self, circID, data):
-    self.circID = circID
-    self.data = data
-
 class Router:
   ip = None
   port = None
@@ -105,45 +90,43 @@ class Router:
     while True:
       msg = connection.recv(4096)
       if not msg: break
-      obj = pickle.loads(msg)
-      objClass = obj.__class__.__name__
-      if objClass == 'Create':
-        circID = obj.circID
+      cmd = msg[2:3]
+      if cmd == b'C':
+        print('Create Recv')
+        circID = msg[0:2]
         # calc shared key
-        gx = int(self.decryptRSA(obj.data))
+        gx = int(self.decryptRSA(msg[3:]))
         sk = pow(gx, y, p)
         hsk = sha256(str(sk).encode())
         # calc gy to send back
         gy = pow(g, y, p)
         # send back to sender
-        msg = Created(circID=circID, data=gy)
-        connection.send(pickle.dumps(msg))
+        msg = circID + b'C' + str(gy).encode()
+        connection.send(msg)
         # wait for next msg
         continue
-      elif objClass == 'Relay':
+      elif cmd == b'R':
         # decrypt layer
-        encryptedData = pickle.loads(obj.data)
+        encryptedData = pickle.loads(msg[3:])
         data = pickle.loads(self.decryptAES(hsk, encryptedData))
         # only to forward messages will have this key after decryption
         if 'cipherText' in data:
           # forward to next router
-          msg = Relay(circID=circID+1, data=pickle.dumps(data))
-          nextRouter.send(pickle.dumps(msg))
+          msg = circID + b'R' + pickle.dumps(data)
+          nextRouter.send(msg)
           # recv message
           msg = nextRouter.recv(4096)
           size = int(msg.decode())
           msg = nextRouter.recv(size)
-          obj = pickle.loads(msg)
-          objClass = obj.__class__.__name__
-          if objClass == 'Relay':
-            cipherText, nonce = self.encryptAES(hsk, obj.data)
+          cmd = msg[2:3]
+          if cmd == b'R':
+            cipherText, nonce = self.encryptAES(hsk, msg[3:])
             data = {
               'cipherText': cipherText,
               'nonce': nonce
             }
             # send relay obj back to connection
-            msg = Relay(circID=circID, data=pickle.dumps(data))
-            msg = pickle.dumps(msg)
+            msg = circID + b'R' + pickle.dumps(data)
             size = str(len(msg)).encode()
             connection.send(size)
             time.sleep(1)
@@ -157,12 +140,13 @@ class Router:
             ip, port = tuple(server.split(':'))
             nextRouter = self.connectSocket(ip, int(port))
             # send create
-            msg = Create(circID=circID+1, data=ex)
-            nextRouter.send(pickle.dumps(msg))
+            msg = get_random_bytes(2) + b'C' + ex
+            nextRouter.send(msg)
             # recv created
             msg = nextRouter.recv(4096)
-            obj = pickle.loads(msg)
-            gy = obj.data
+            cmd = msg[2:3]
+            if cmd != b'C': break
+            gy = msg[3:]
             # create relay message
             innerData = {
               'cmd': 'Extended',
@@ -175,8 +159,8 @@ class Router:
               'nonce': nonce
             }
             # send relay obj back to connection
-            msg = Relay(circID=1, data=pickle.dumps(data))
-            msg = pickle.dumps(msg)
+            # think of way to assoicate circID with socket
+            msg = circID + b'R' + pickle.dumps(data)
             size = str(len(msg)).encode()
             connection.send(size)
             time.sleep(1)
@@ -197,8 +181,7 @@ class Router:
               'nonce': nonce
             }
             # send relay obj back to connection
-            msg = Relay(circID=circID, data=pickle.dumps(data))
-            msg = pickle.dumps(msg)
+            msg = circID + b'R' + pickle.dumps(data)
             size = str(len(msg)).encode()
             connection.send(size)
             time.sleep(1)

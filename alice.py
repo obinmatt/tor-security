@@ -5,10 +5,11 @@ from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Util import Padding
 from Crypto.Random import get_random_bytes
 from Crypto.Random.random import getrandbits
-from router import GetRouters, Create, Created, Relay
 from base64 import b64encode, b64decode
 from hashlib import sha256
 from random import sample
+
+from router import GetRouters
 
 PORT = 9005
 SERVER = 'localhost'
@@ -74,16 +75,15 @@ def createCircuit(routers):
   cipher = PKCS1_OAEP.new(pubKey)
   cipherText = cipher.encrypt(str(gx1).encode())
   # send create msg
-  msg = Create(circID=1, data=cipherText)
-  ssocket.send(pickle.dumps(msg))
+  circID = get_random_bytes(2)
+  msg = circID + b'C' + cipherText
+  ssocket.send(msg)
   # recv created back
   msg = ssocket.recv(4096)
-  # parse object
-  obj = pickle.loads(msg)
-  objType = obj.__class__.__name__
-  if objType == 'Created':
+  cmd = msg[2:3]
+  if cmd == b'C':
     print('Created Recieved')
-    gy1 = obj.data
+    gy1 = int((msg[3:]).decode())
     # calc shared key with OR1
     sk1 = pow(gy1, x1, p)
     hsk1 = sha256(str(sk1).encode())
@@ -106,25 +106,23 @@ def createCircuit(routers):
       'cipherText': cipherText,
       'nonce': nonce
     }
-    # send relay obj
-    msg = Relay(circID=1, data=pickle.dumps(data))
-    ssocket.send(pickle.dumps(msg))
+    # send relay msg
+    msg = circID + b'R' + pickle.dumps(data)
+    ssocket.send(msg)
     # recv relay back
     msg = ssocket.recv(4096)
     size = int(msg.decode())
     msg = ssocket.recv(size)
-    # parse object
-    obj = pickle.loads(msg)
-    objType = obj.__class__.__name__
-    if objType == 'Relay':
+    cmd = msg[2:3]
+    if cmd == b'R':
       print('Relay recieved')
       # decrypt data using shared key
-      encryptedData = pickle.loads(obj.data)
+      encryptedData = pickle.loads(msg[3:])
       data = pickle.loads(decryptAES(hsk1, encryptedData))
       if data['cmd'] == 'Extended':
         # calc shared key with OR2
         gy2 = data['value']
-        sk2 = pow(gy2, x2, p)
+        sk2 = pow(int(gy2), x2, p)
         hsk2 = sha256(str(sk2).encode())
         # save in global list
         HSK.append(hsk2)
@@ -148,26 +146,24 @@ def createCircuit(routers):
             'nonce': nonce
           }
         data = innerData
-        # create relay message
-        msg = Relay(circID=1, data=pickle.dumps(data))
-        ssocket.send(pickle.dumps(msg))
+        # send relay msg
+        msg = circID + b'R' + pickle.dumps(data)
+        ssocket.send(msg)
         # recv relay back
         msg = ssocket.recv(4096)
         size = int(msg.decode())
         msg = ssocket.recv(size)
-        # parse object
-        obj = pickle.loads(msg)
-        objType = obj.__class__.__name__
-        if objType == 'Relay':
+        cmd = msg[2:3]
+        if cmd == b'R':
           # decrypt data using shared key
-          data = obj.data
+          data = msg[3:]
           for x in HSK:
             encryptedData = pickle.loads(data)
             data = pickle.loads(decryptAES(x, encryptedData))
           if data['cmd'] == 'Extended':
             # calc shared key with OR3
             gy3 = data['value']
-            sk3 = pow(gy3, x3, p)
+            sk3 = pow(int(gy3), x3, p)
             hsk3 = sha256(str(sk3).encode())
             # save in global list
             HSK.append(hsk3)
@@ -188,15 +184,14 @@ def sendRequest(url, ssocket, circuit):
       'nonce': nonce
     }
   data = innerData
-  # create relay message
-  msg = Relay(circID=1, data=pickle.dumps(data))
-  ssocket.send(pickle.dumps(msg))
+  msg = get_random_bytes(2) + b'R' + pickle.dumps(data)
+  ssocket.send(msg)
   # recv message
   msg = ssocket.recv(4096)
   size = int(msg.decode())
+  print(f'Size of relay contained webpage: {size}')
   msg = ssocket.recv(size)
-  obj = pickle.loads(msg)
-  data = obj.data
+  data = msg[3:]
   # decrypt response
   for x in HSK:
     encryptedData = pickle.loads(data)
