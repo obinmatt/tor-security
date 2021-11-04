@@ -5,7 +5,6 @@ from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Util import Padding
 from Crypto.Random import get_random_bytes
 from Crypto.Random.random import getrandbits
-from base64 import b64encode, b64decode
 from hashlib import sha256
 from threading import Thread
 
@@ -68,14 +67,13 @@ class Router:
     key = bytes.fromhex(hsk.hexdigest())
     cipher = AES.new(key, AES.MODE_CTR)
     ct_bytes = cipher.encrypt(pickle.dumps(data))
-    nonce = b64encode(cipher.nonce).decode('utf-8')
-    ct = b64encode(ct_bytes).decode('utf-8')
-    return ct, nonce
+    nonce = cipher.nonce
+    return ct_bytes, nonce
 
   def decryptAES(self, hsk, data):
     key = bytes.fromhex(hsk.hexdigest())
-    nonce = b64decode(data['nonce'])
-    ct = b64decode(data['cipherText'])
+    nonce = data['nonce']
+    ct = data['cipherText']
     cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
     return cipher.decrypt(ct)
 
