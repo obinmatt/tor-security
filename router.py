@@ -1,4 +1,4 @@
-import sys, socket, pickle, threading, time, requests
+import sys, socket, pickle, threading, time, requests, dns.resolver
 
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
@@ -85,6 +85,7 @@ class Router:
     hsk = None
     circID = None
     nextRouter = None
+    nextCircID = None
     while True:
       msg = connection.recv(4096)
       if not msg: break
@@ -109,7 +110,7 @@ class Router:
         # only to forward messages will have this key after decryption
         if 'cipherText' in data:
           # forward to next router
-          msg = circID + b'R' + pickle.dumps(data)
+          msg = nextCircID + b'R' + pickle.dumps(data)
           nextRouter.send(msg)
           # recv message
           msg = nextRouter.recv(4096)
@@ -130,10 +131,10 @@ class Router:
             connection.send(msg)
         else:
           # execute cmd
-          if data['cmd'] == 'Extend':
+          if data['CMD'] == 'Extend':
             # send create to next router
-            server = data['server']
-            ex = data['value']
+            server = data['StreamID']
+            ex = data['DATA']
             ip, port = tuple(server.split(':'))
             nextRouter = self.connectSocket(ip, int(port))
             # send create
@@ -146,9 +147,9 @@ class Router:
             gy = msg[3:]
             # create relay message
             innerData = {
-              'cmd': 'Extended',
-              'server': '',
-              'value': gy
+              'StreamID': circID,
+              'CMD': 'Extended',
+              'DATA': gy
             }
             cipherText, nonce = self.encryptAES(hsk, innerData)
             data = {
@@ -156,20 +157,20 @@ class Router:
               'nonce': nonce
             }
             # send relay obj back to connection
-            # think of way to assoicate circID with socket
-            msg = circID + b'R' + pickle.dumps(data)
+            nextCircID = get_random_bytes(2)
+            msg = nextCircID + b'R' + pickle.dumps(data)
             size = str(len(msg)).encode()
             connection.send(size)
             time.sleep(1)
             connection.send(msg)
-          elif data['cmd'] == 'Begin':
+          elif data['CMD'] == 'Data':
             # send request to web server
-            url = data['server']
-            r = requests.get(url)
+            url = data['DATA']
+            r = requests.get(f'https://{url}')
             # encrypt data
             innerData = {
-              'cmd': 'Connected',
-              'data': r.text
+              'CMD': 'Connected',
+              'DATA': r.text
             }
             # encrypt innerData using hsk
             cipherText, nonce = self.encryptAES(hsk, innerData)
