@@ -1,4 +1,4 @@
-import sys, socket, pickle, threading, time, requests, dns.resolver
+import sys, socket, pickle, threading, time
 
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
@@ -7,6 +7,7 @@ from Crypto.Random import get_random_bytes
 from Crypto.Random.random import getrandbits
 from hashlib import sha256
 from threading import Thread
+from select import select
 
 class GetRouters:
   pass
@@ -163,14 +164,17 @@ class Router:
             connection.send(size)
             time.sleep(1)
             connection.send(msg)
-          elif data['CMD'] == 'Data':
-            # send request to web server
+          elif data['CMD'] == 'Begin':
             url = data['DATA']
-            r = requests.get(f'https://{url}')
-            # encrypt data
+            # create tcp connection
+            try:
+              nextRouter = self.connectSocket(url, 80)
+            except Exception as inst:
+              print(inst)
+            # build msg
             innerData = {
-              'CMD': 'Connected',
-              'DATA': r.text
+              'StreamID': circID,
+              'CMD': 'Connected'
             }
             # encrypt innerData using hsk
             cipherText, nonce = self.encryptAES(hsk, innerData)
@@ -178,12 +182,43 @@ class Router:
               'cipherText': cipherText,
               'nonce': nonce
             }
-            # send relay obj back to connection
+            # send relay back to connection
             msg = circID + b'R' + pickle.dumps(data)
             size = str(len(msg)).encode()
             connection.send(size)
             time.sleep(1)
             connection.send(msg)
+          elif data['CMD'] == 'Data':
+            request = data['DATA']
+            # send request
+            nextRouter.send(request.encode())
+            # recv response
+            responseList = list()
+            while True:
+              ready, _, _ = select([nextRouter], [], [], 1)
+              if not ready: break
+              chunk = ready[0].recv(4096)
+              responseList.append(chunk)
+            response = b''.join(responseList)
+            # encrypt data
+            innerData = {
+              'StreamID': circID,
+              'CMD': 'Data',
+              'DATA': response
+            }
+            # encrypt innerData using hsk
+            cipherText, nonce = self.encryptAES(hsk, innerData)
+            data = {
+              'cipherText': cipherText,
+              'nonce': nonce
+            }
+            # send relay back to connection
+            msg = circID + b'R' + pickle.dumps(data)
+            size = str(len(msg)).encode()
+            connection.send(size)
+            time.sleep(1)
+            connection.send(msg)
+
       continue
     connection.close()
 

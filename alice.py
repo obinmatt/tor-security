@@ -169,10 +169,36 @@ def createCircuit(routers):
 
 def sendRequest(url, circID, ssocket, circuit):
   print('Sending request..')
+  # send Begin
+  innerData = {
+    'StreamID': 0,
+    'CMD': 'Begin',
+    'DATA': url
+  }
+  # encrypt innerData using shared key(s)
+  for x in reversed(HSK):
+    innerData, nonce = encryptAES(x, innerData)
+    innerData = {
+      'cipherText': innerData,
+      'nonce': nonce
+    }
+  data = innerData
+  msg = circID + b'R' + pickle.dumps(data)
+  ssocket.send(msg)
+  # recv message
+  msg = ssocket.recv(4096)
+  size = int(msg.decode())
+  msg = ssocket.recv(size)
+  data = msg[3:]
+  # decrypt response
+  for x in HSK:
+    encryptedData = pickle.loads(data)
+    data = pickle.loads(decryptAES(x, encryptedData))
+  if data['CMD'] != 'Connected': exit('Sus')
   innerData = {
     'StreamID': 0,
     'CMD': 'Data',
-    'DATA': url
+    'DATA': 'GET / HTTP/1.1\r\nHost: {}\r\n\r\n'.format(url)
   }
   # encrypt innerData using shared key(s)
   for x in reversed(HSK):
@@ -194,12 +220,8 @@ def sendRequest(url, circID, ssocket, circuit):
   for x in HSK:
     encryptedData = pickle.loads(data)
     data = pickle.loads(decryptAES(x, encryptedData))
-  if data['CMD'] == 'Connected':
-    f = open('response.html','w')
-    f.write(data['DATA'])
-    f.close()
+  print(data['DATA'])
   ssocket.close()
-  print('Response received!')
   return 
 
 def main(url):
