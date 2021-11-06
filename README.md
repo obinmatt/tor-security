@@ -24,7 +24,7 @@ python3 router.py 'localhost' 9003
 
 ## 5. Start alice.py
 ```bash
-python3 alice.py https://www.google.com/
+python3 alice.py www.google.com/
 ```
 
 ## 6. Response will be saved in response.html
