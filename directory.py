@@ -1,7 +1,5 @@
 import socket, pickle
 
-from router import Register, GetRouters
-
 PORT = 9000
 SERVER = 'localhost'
 
@@ -17,15 +15,16 @@ def listen():
     print('New connection from {}'.format(address))
     # recv message
     msg = connection.recv(4096)
-    obj = pickle.loads(msg)
-    objClass = obj.__class__.__name__
-    if objClass == 'Register':
-      addr = obj.addr
-      pubKey = obj.pubKey
+    cmd = msg[0:1]
+    if cmd == b'R':
+      data = msg[1:]
+      obj = pickle.loads(data)
+      addr = '{}:{}'.format(obj['ip'], obj['port'])
+      pubKey = obj['pubKey']
       # save router info
       ROUTERS.update({addr:pubKey})
       print('Router {} registered'.format(addr))
-    elif objClass == 'GetRouters':
+    elif cmd == b'G':
       data = pickle.dumps(ROUTERS)
       connection.send(data)
       print('{} fetched routers'.format(address))
