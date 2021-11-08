@@ -1,4 +1,4 @@
-import sys, socket, pickle, threading, time
+import sys, socket, threading, time, pickle
 
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
@@ -70,10 +70,16 @@ class Router:
 
   def decryptAES(self, hsk, data):
     key = bytes.fromhex(hsk.hexdigest())
-    nonce = data['nonce']
-    ct = data['cipherText']
+    nonce = data[0:8]
+    ct = data[8:]
     cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
     return cipher.decrypt(ct)
+
+  def padData(self, length, data):
+    return data.ljust(length, b'\0')
+
+  def unpadData(self, data):
+    return data.rstrip(b'\0')
 
   def handleClient(self, connection, address):
     print('New connection - {}'.format(address))
@@ -88,27 +94,101 @@ class Router:
       msg = connection.recv(512)
       if not msg: break
       cmd = msg[2:3]
+      data = msg[3:]
       if cmd == b'C':
         circID = msg[0:2]
+        data = self.unpadData(data)
         # calc shared key
-        gx = int(self.decryptRSA(msg[3:]))
+        gx = int(self.decryptRSA(data))
         sk = pow(gx, y, p)
         hsk = sha256(str(sk).encode())
         # calc gy to send back
         gy = pow(g, y, p)
+        data = self.padData(509, str(gy).encode())
         # send back to sender
-        msg = circID + b'C' + str(gy).encode()
+        msg = circID + b'C' + data
         connection.send(msg)
         # wait for next msg
         continue
       elif cmd == b'R':
         # decrypt layer
-        encryptedData = pickle.loads(msg[3:])
-        data = pickle.loads(self.decryptAES(hsk, encryptedData))
-        # only to forward messages will have this key after decryption
-        if 'cipherText' in data:
+        data = self.unpadData(data)
+        relayHeader = self.decryptAES(hsk, data)
+        streamID = relayHeader[0:2]
+        digest = relayHeader[2:8]
+        length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+        cmd = relayHeader[10:11]
+        data = relayHeader[11:length+11]
+        # execute cmd
+        if cmd == b'E':
+          # send create to next router
+          router = self.unpadData(data[0:21]).decode()
+          ip, port = tuple(router.split(':'))
+          nextRouter = self.connectSocket(ip, int(port))
+          # send create
+          nextCircID = get_random_bytes(2)
+          ex = data[21:]
+          data = self.padData(509, ex)
+          msg = nextCircID + b'C' + data
+          nextRouter.send(msg)
+          # recv created
+          msg = nextRouter.recv(512)
+          cmd = msg[2:3]
+          if cmd != b'C': break
+          data = msg[3:]
+          gy = self.unpadData(data)
+          # create relay message
+          streamID = get_random_bytes(2)
+          digest = get_random_bytes(6)
+          length = len(gy).to_bytes(2, sys.byteorder)
+          relayHeader = streamID + digest + length + b'E' + gy
+          cipherText, nonce = self.encryptAES(hsk, relayHeader)
+          # send relay back to connection
+          data = nonce + cipherText
+          paddedData = self.padData(509, data)
+          msg = circID + b'R' + paddedData
+          connection.send(msg)
+        elif cmd == b'B':
+          url = data.decode()
+          # create tcp connection
+          try:
+            nextRouter = self.connectSocket(url, 80)
+          except Exception as inst:
+            print(inst)
+          # build msg
+          streamID = get_random_bytes(2)
+          digest = get_random_bytes(6)
+          length = get_random_bytes(2)
+          relayHeader = streamID + digest + length + b'C'
+          cipherText, nonce = self.encryptAES(hsk, relayHeader)
+          # send relay back to connection
+          data = nonce + cipherText
+          paddedData = self.padData(509, data)
+          msg = circID + b'R' + paddedData
+          connection.send(msg)
+        elif cmd == b'D':
+          request = self.unpadData(data)
+          # send request
+          nextRouter.send(request)
+          # recv response
+          while True:
+            ready, _, _ = select([nextRouter], [], [], 1)
+            if not ready: break
+            chunk = ready[0].recv(474)
+            # create relay message
+            streamID = get_random_bytes(2)
+            digest = get_random_bytes(6)
+            length = (474).to_bytes(2, sys.byteorder)
+            relayHeader = streamID + digest + length + b'D' + chunk
+            cipherText, nonce = self.encryptAES(hsk, relayHeader)
+            # send relay back to connection
+            data = nonce + cipherText
+            paddedData = self.padData(509, data)
+            msg = circID + b'R' + paddedData
+            connection.send(msg)
+        else:
           # forward to next router
-          msg = nextCircID + b'R' + pickle.dumps(data)
+          msg = nextCircID + b'R' + relayHeader
           nextRouter.send(msg)
           # recv message
           while True:
@@ -117,96 +197,12 @@ class Router:
             msg = ready[0].recv(512)
             cmd = msg[2:3]
             if cmd == b'R':
-              data = msg[3:]
-              data = data.rstrip(b'\0')
+              data = self.unpadData(msg[3:])
               cipherText, nonce = self.encryptAES(hsk, data)
-              data = {
-                'cipherText': cipherText,
-                'nonce': nonce
-              }
-              # send relay obj back to connection
-              data = pickle.dumps(data)
-              msg = circID + b'R' + data.ljust(509, b'\0')
-              connection.send(msg)
-        else:
-          # execute cmd
-          if data['CMD'] == b'E':
-            # send create to next router
-            server = data['StreamID']
-            ex = data['DATA']
-            ip, port = tuple(server.split(':'))
-            nextRouter = self.connectSocket(ip, int(port))
-            # send create
-            msg = get_random_bytes(2) + b'C' + ex
-            nextRouter.send(msg)
-            # recv created
-            msg = nextRouter.recv(512)
-            cmd = msg[2:3]
-            if cmd != b'C': break
-            gy = msg[3:]
-            # create relay message
-            innerData = {
-              'StreamID': circID,
-              'CMD': b'E',
-              'DATA': gy
-            }
-            innerData = pickle.dumps(innerData)
-            cipherText, nonce = self.encryptAES(hsk, innerData)
-            data = {
-              'cipherText': cipherText,
-              'nonce': nonce
-            }
-            # send relay obj back to connection
-            nextCircID = get_random_bytes(2)
-            msg = nextCircID + b'R' + pickle.dumps(data)
-            # size = str(len(msg)).encode()
-            # connection.send(size)
-            # time.sleep(1)
-            connection.send(msg)
-          elif data['CMD'] == b'B':
-            url = data['DATA']
-            # create tcp connection
-            try:
-              nextRouter = self.connectSocket(url, 80)
-            except Exception as inst:
-              print(inst)
-            # build msg
-            innerData = {
-              'StreamID': circID,
-              'CMD': 'Connected'
-            }
-            innerData = pickle.dumps(innerData)
-            # encrypt innerData using hsk
-            cipherText, nonce = self.encryptAES(hsk, innerData)
-            data = {
-              'cipherText': cipherText,
-              'nonce': nonce
-            }
-            # send relay back to connection
-            msg = circID + b'R' + pickle.dumps(data)
-            # size = str(len(msg)).encode()
-            # connection.send(size)
-            # time.sleep(1)
-            connection.send(msg)
-          elif data['CMD'] == b'D':
-            request = data['DATA']
-            # send request
-            nextRouter.send(request.encode())
-            # recv response
-            while True:
-              ready, _, _ = select([nextRouter], [], [], 1)
-              if not ready: break
-              chunk = ready[0].recv(329)
-              data = pickle.dumps(chunk)
-              # encrypt innerData using hsk
-              cipherText, nonce = self.encryptAES(hsk, data)
-              data = {
-                'cipherText': cipherText,
-                'nonce': nonce
-              }
-              data = pickle.dumps(data)
+              data = nonce + cipherText
+              paddedData = self.padData(509, data)
               # send relay back to connection
-              msg = circID + b'R' + data.ljust(509, b'\0')
+              msg = circID + b'R' + paddedData
               connection.send(msg)
       continue
     connection.close()
