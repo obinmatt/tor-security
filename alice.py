@@ -106,15 +106,18 @@ def createCircuit(routers):
     data = padData(21, addr) + cipherText
     # StreamID + Digest + Len + CMD + DATA
     streamID = get_random_bytes(2)
-    digest = get_random_bytes(6)
+    digest = HSK[0].digest()[0:6]
     length = len(data).to_bytes(2, sys.byteorder)
     relayHeader = streamID + digest + length + b'E' + data
+    # encrypt relayHeader
     cipherText, nonce = encryptAES(hsk1, relayHeader)
     # send relay msg
     data = nonce + cipherText
     paddedData = padData(509, data)
     msg = circID + b'R' + paddedData
     ssocket.send(msg)
+    # update digest
+    HSK[0].update(relayHeader)
     # recv relay back
     msg = ssocket.recv(512)
     cmd = msg[2:3]
@@ -128,58 +131,62 @@ def createCircuit(routers):
       length = int.from_bytes(relayHeader[8:10], sys.byteorder)
       cmd = relayHeader[10:11]
       data = relayHeader[11:length+11]
-      if cmd == b'E':
-        # calc shared key with OR2
-        gy2 = data
-        sk2 = pow(int(gy2), x2, p)
-        hsk2 = sha256(str(sk2).encode())
-        # save in global list
-        HSK.append(hsk2)
-        # calc gx3
-        gx3 = pow(g, x3, p)
-        # encypt gx3 using routers public key
-        pubKey = RSA.importKey(circuit[2][1])
-        cipher = PKCS1_OAEP.new(pubKey)
-        cipherText = cipher.encrypt(str(gx3).encode())
-        # send addr of next hop
-        addr = circuit[2][0].encode()
-        # pad addr with '\0' till 21 bytes
-        data = padData(21, addr) + cipherText
-        # StreamID + Digest + Len + CMD + DATA
-        streamID = get_random_bytes(2)
-        digest = get_random_bytes(6)
-        length = len(data).to_bytes(2, sys.byteorder)
-        relayHeader = streamID + digest + length + b'E' + data
-        # encrypt relayHeader using shared key(s)
-        for x in reversed(HSK):
-          relayHeader, nonce = encryptAES(x, relayHeader)
-          relayHeader = nonce + relayHeader
-        data = relayHeader
-        paddedData = padData(509, data)
-        # send relay msg
-        msg = circID + b'R' + paddedData
-        ssocket.send(msg)
-        # recv relay back
-        msg = ssocket.recv(512)
-        cmd = msg[2:3]
-        if cmd == b'R':
-          print('Relay recieved')
-          relayHeader = msg[3:]
-          # decrypt relayHeader using shared key(s)
-          for x in HSK:
-            relayHeader = decryptAES(x, relayHeader)
-          streamID = relayHeader[0:2]
-          digest = relayHeader[2:8]
-          length = int.from_bytes(relayHeader[8:10], sys.byteorder)
-          cmd = relayHeader[10:11]
-          data = relayHeader[11:length+11]
-          if cmd == b'E':
-            # calc shared key with OR3
-            gy3 = data
-            sk3 = pow(int(gy3), x3, p)
-            hsk3 = sha256(str(sk3).encode())
-            # save in global list
-            HSK.append(hsk3)
+      if HSK[0].digest()[0:6] == digest:
+        if cmd == b'E':
+          # calc shared key with OR2
+          gy2 = data
+          sk2 = pow(int(gy2), x2, p)
+          hsk2 = sha256(str(sk2).encode())
+          # save in global list
+          HSK.append(hsk2)
+          # calc gx3
+          gx3 = pow(g, x3, p)
+          # encypt gx3 using routers public key
+          pubKey = RSA.importKey(circuit[2][1])
+          cipher = PKCS1_OAEP.new(pubKey)
+          cipherText = cipher.encrypt(str(gx3).encode())
+          # send addr of next hop
+          addr = circuit[2][0].encode()
+          # pad addr with '\0' till 21 bytes
+          data = padData(21, addr) + cipherText
+          # StreamID + Digest + Len + CMD + DATA
+          streamID = get_random_bytes(2)
+          digest = HSK[1].digest()[0:6]
+          length = len(data).to_bytes(2, sys.byteorder)
+          relayHeader = streamID + digest + length + b'E' + data
+          data = relayHeader
+          # encrypt data using shared key(s)
+          for x in reversed(HSK):
+            data, nonce = encryptAES(x, data)
+            data = nonce + data
+          paddedData = padData(509, data)
+          # send relay msg
+          msg = circID + b'R' + paddedData
+          ssocket.send(msg)
+          # update digest
+          HSK[1].update(relayHeader)
+          # recv relay back
+          msg = ssocket.recv(512)
+          cmd = msg[2:3]
+          if cmd == b'R':
+            print('Relay recieved')
+            relayHeader = msg[3:]
+            # decrypt relayHeader using shared key(s)
+            for x in HSK:
+              relayHeader = decryptAES(x, relayHeader)
+            streamID = relayHeader[0:2]
+            digest = relayHeader[2:8]
+            length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+            cmd = relayHeader[10:11]
+            data = relayHeader[11:length+11]
+            if HSK[1].digest()[0:6] == digest:
+              if cmd == b'E':
+                # calc shared key with OR3
+                gy3 = data
+                sk3 = pow(int(gy3), x3, p)
+                hsk3 = sha256(str(sk3).encode())
+                # save in global list
+                HSK.append(hsk3)
   return circID, ssocket, circuit
 
 def sendRequest(url, circID, ssocket, circuit):
@@ -189,16 +196,18 @@ def sendRequest(url, circID, ssocket, circuit):
   paddedData = padData(474, data)
   # StreamID + Digest + Len + CMD + DATA
   streamID = get_random_bytes(2)
-  digest = get_random_bytes(6)
+  digest = HSK[2].digest()[0:6]
   length = len(data).to_bytes(2, sys.byteorder)
   relayHeader = streamID + digest + length + b'B' + paddedData
-  # encrypt relayHeader using shared key(s)
-  for x in reversed(HSK):
-    relayHeader, nonce = encryptAES(x, relayHeader)
-    relayHeader = nonce + relayHeader
   data = relayHeader
+  # encrypt data using shared key(s)
+  for x in reversed(HSK):
+    data, nonce = encryptAES(x, data)
+    data = nonce + data
   msg = circID + b'R' + data
   ssocket.send(msg)
+  # update digest
+  HSK[2].update(relayHeader)
   # recv message
   msg = ssocket.recv(512)
   relayHeader = msg[3:]
@@ -210,40 +219,43 @@ def sendRequest(url, circID, ssocket, circuit):
   length = int.from_bytes(relayHeader[8:10], sys.byteorder)
   cmd = relayHeader[10:11]
   data = relayHeader[11:length+11]
-  if cmd != b'C': exit('Sus')
-  data = ('GET / HTTP/1.1\r\nHost: {}\r\n\r\n'.format(url)).encode()
-  paddedData = padData(474, data)
-  # StreamID + Digest + Len + CMD + DATA
-  streamID = get_random_bytes(2)
-  digest = get_random_bytes(6)
-  length = len(data).to_bytes(2, sys.byteorder)
-  relayHeader = streamID + digest + length + b'D' + paddedData
-  # encrypt relayHeader using shared key(s)
-  for x in reversed(HSK):
-    relayHeader, nonce = encryptAES(x, relayHeader)
-    relayHeader = nonce + relayHeader
-  data = relayHeader
-  msg = circID + b'R' + data
-  ssocket.send(msg)
-  # recv message
-  response = list()
-  while True:
-    ready, _, _ = select([ssocket], [], [], len(circuit))
-    if not ready: break
-    chunk = ready[0].recv(512)
-    msg = unpadData(chunk)
-    relayHeader = msg[3:]
-    # decrypt relayHeader using shared key(s)
-    for x in HSK:
-      relayHeader = decryptAES(x, relayHeader)
-    streamID = relayHeader[0:2]
-    digest = relayHeader[2:8]
-    length = int.from_bytes(relayHeader[8:10], sys.byteorder)
-    cmd = relayHeader[10:11]
-    data = relayHeader[11:length+11]
-    # append data to list
-    response.append(data)
-  print(b''.join(response))
+  if HSK[2].digest()[0:6] == digest:
+    if cmd != b'C': exit('Sus')
+    data = ('GET / HTTP/1.1\r\nHost: {}\r\n\r\n'.format(url)).encode()
+    paddedData = padData(474, data)
+    # StreamID + Digest + Len + CMD + DATA
+    streamID = get_random_bytes(2)
+    digest = HSK[2].digest()[0:6]
+    length = len(data).to_bytes(2, sys.byteorder)
+    relayHeader = streamID + digest + length + b'D' + paddedData
+    data = relayHeader
+    # encrypt relayHeader using shared key(s)
+    for x in reversed(HSK):
+      data, nonce = encryptAES(x, data)
+      data = nonce + data
+    msg = circID + b'R' + data
+    ssocket.send(msg)
+    # update digest
+    HSK[2].update(relayHeader)
+    # recv message
+    response = list()
+    while True:
+      ready, _, _ = select([ssocket], [], [], len(circuit))
+      if not ready: break
+      chunk = ready[0].recv(512)
+      msg = unpadData(chunk)
+      relayHeader = msg[3:]
+      # decrypt relayHeader using shared key(s)
+      for x in HSK:
+        relayHeader = decryptAES(x, relayHeader)
+      streamID = relayHeader[0:2]
+      digest = relayHeader[2:8]
+      length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+      cmd = relayHeader[10:11]
+      data = relayHeader[11:length+11]
+      # append data to list
+      response.append(data)
+    print(b''.join(response))
   ssocket.close()
   return 
 
