@@ -63,17 +63,14 @@ class Router:
 
   def encryptAES(self, hsk, data):
     key = bytes.fromhex(hsk.hexdigest())
-    cipher = AES.new(key, AES.MODE_CTR)
+    cipher = AES.new(key, AES.MODE_CTR, nonce=b'\0')
     ct_bytes = cipher.encrypt(data)
-    nonce = cipher.nonce
-    return ct_bytes, nonce
+    return ct_bytes
 
   def decryptAES(self, hsk, data):
     key = bytes.fromhex(hsk.hexdigest())
-    nonce = data[0:8]
-    ct = data[8:]
-    cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
-    return cipher.decrypt(ct)
+    cipher = AES.new(key, AES.MODE_CTR, nonce=b'\0')
+    return cipher.decrypt(data)
 
   def padData(self, length, data):
     return data.ljust(length, b'\0')
@@ -115,7 +112,6 @@ class Router:
         continue
       elif cmd == b'R':
         # decrypt layer
-        data = self.unpadData(data)
         relayHeader = self.decryptAES(hsk, data)
         streamID = relayHeader[0:2]
         digest = relayHeader[2:8]
@@ -148,12 +144,10 @@ class Router:
             streamID = get_random_bytes(2)
             digest = hdata.digest()[0:6]
             length = len(gy).to_bytes(2, sys.byteorder)
-            relayHeader = streamID + digest + length + b'E' + gy
-            cipherText, nonce = self.encryptAES(hsk, relayHeader)
+            relayHeader = streamID + digest + length + b'E' + self.padData(498, gy)
+            cipherText = self.encryptAES(hsk, relayHeader)
             # send relay back to connection
-            data = nonce + cipherText
-            paddedData = self.padData(509, data)
-            msg = circID + b'R' + paddedData
+            msg = circID + b'R' + cipherText
             connection.send(msg)
           elif cmd == b'B':
             url = data.decode()
@@ -166,12 +160,10 @@ class Router:
             streamID = get_random_bytes(2)
             digest = hdata.digest()[0:6]
             length = get_random_bytes(2)
-            relayHeader = streamID + digest + length + b'C'
-            cipherText, nonce = self.encryptAES(hsk, relayHeader)
+            relayHeader = streamID + digest + length + b'C' + self.padData(498, b'')
+            cipherText = self.encryptAES(hsk, relayHeader)
             # send relay back to connection
-            data = nonce + cipherText
-            paddedData = self.padData(509, data)
-            msg = circID + b'R' + paddedData
+            msg = circID + b'R' + cipherText
             connection.send(msg)
           elif cmd == b'D':
             request = self.unpadData(data)
@@ -181,17 +173,15 @@ class Router:
             while True:
               ready, _, _ = select([nextRouter], [], [], 1)
               if not ready: break
-              chunk = ready[0].recv(474)
+              chunk = ready[0].recv(498)
               # create relay message
               streamID = get_random_bytes(2)
               digest = hdata.digest()[0:6]
-              length = (474).to_bytes(2, sys.byteorder)
+              length = (498).to_bytes(2, sys.byteorder)
               relayHeader = streamID + digest + length + b'D' + chunk
-              cipherText, nonce = self.encryptAES(hsk, relayHeader)
+              cipherText = self.encryptAES(hsk, relayHeader)
               # send relay back to connection
-              data = nonce + cipherText
-              paddedData = self.padData(509, data)
-              msg = circID + b'R' + paddedData
+              msg = circID + b'R' + cipherText
               connection.send(msg)
         else:
           # forward to next router
@@ -203,13 +193,11 @@ class Router:
             if not ready: break
             msg = ready[0].recv(512)
             cmd = msg[2:3]
+            data = msg[3:]
             if cmd == b'R':
-              data = self.unpadData(msg[3:])
-              cipherText, nonce = self.encryptAES(hsk, data)
-              data = nonce + cipherText
-              paddedData = self.padData(509, data)
+              cipherText = self.encryptAES(hsk, data)
               # send relay back to connection
-              msg = circID + b'R' + paddedData
+              msg = circID + b'R' + cipherText
               connection.send(msg)
       continue
     connection.close()

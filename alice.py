@@ -45,17 +45,14 @@ def connectSocket(server, port):
 
 def encryptAES(hsk, data):
   key = bytes.fromhex(hsk.hexdigest())
-  cipher = AES.new(key, AES.MODE_CTR)
+  cipher = AES.new(key, AES.MODE_CTR, nonce=b'\0')
   ct_bytes = cipher.encrypt(data)
-  nonce = cipher.nonce
-  return ct_bytes, nonce
+  return ct_bytes
 
 def decryptAES(hsk, data):
   key = bytes.fromhex(hsk.hexdigest())
-  nonce = data[0:8]
-  ct = data[8:]
-  cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
-  return cipher.decrypt(ct)
+  cipher = AES.new(key, AES.MODE_CTR, nonce=b'\0')
+  return cipher.decrypt(data)
 
 def padData(length, data):
   return data.ljust(length, b'\0')
@@ -104,17 +101,16 @@ def createCircuit(routers):
     addr = circuit[1][0].encode()
     # pad addr with '\0' till 21 bytes
     data = padData(21, addr) + cipherText
+    paddedData = padData(498, data)
     # StreamID + Digest + Len + CMD + DATA
     streamID = get_random_bytes(2)
     digest = HSK[0].digest()[0:6]
     length = len(data).to_bytes(2, sys.byteorder)
-    relayHeader = streamID + digest + length + b'E' + data
+    relayHeader = streamID + digest + length + b'E' + paddedData
     # encrypt relayHeader
-    cipherText, nonce = encryptAES(hsk1, relayHeader)
+    cipherText = encryptAES(hsk1, relayHeader)
     # send relay msg
-    data = nonce + cipherText
-    paddedData = padData(509, data)
-    msg = circID + b'R' + paddedData
+    msg = circID + b'R' + cipherText
     ssocket.send(msg)
     # update digest
     HSK[0].update(relayHeader)
@@ -149,19 +145,18 @@ def createCircuit(routers):
           addr = circuit[2][0].encode()
           # pad addr with '\0' till 21 bytes
           data = padData(21, addr) + cipherText
+          paddedData = padData(498, data)
           # StreamID + Digest + Len + CMD + DATA
           streamID = get_random_bytes(2)
           digest = HSK[1].digest()[0:6]
           length = len(data).to_bytes(2, sys.byteorder)
-          relayHeader = streamID + digest + length + b'E' + data
+          relayHeader = streamID + digest + length + b'E' + paddedData
           data = relayHeader
           # encrypt data using shared key(s)
           for x in reversed(HSK):
-            data, nonce = encryptAES(x, data)
-            data = nonce + data
-          paddedData = padData(509, data)
+            data = encryptAES(x, data)
           # send relay msg
-          msg = circID + b'R' + paddedData
+          msg = circID + b'R' + data
           ssocket.send(msg)
           # update digest
           HSK[1].update(relayHeader)
@@ -193,7 +188,7 @@ def sendRequest(url, circID, ssocket, circuit):
   print('Sending request..')
   # send Begin
   data = url.encode()
-  paddedData = padData(474, data)
+  paddedData = padData(498, data)
   # StreamID + Digest + Len + CMD + DATA
   streamID = get_random_bytes(2)
   digest = HSK[2].digest()[0:6]
@@ -202,8 +197,7 @@ def sendRequest(url, circID, ssocket, circuit):
   data = relayHeader
   # encrypt data using shared key(s)
   for x in reversed(HSK):
-    data, nonce = encryptAES(x, data)
-    data = nonce + data
+    data = encryptAES(x, data)
   msg = circID + b'R' + data
   ssocket.send(msg)
   # update digest
@@ -231,8 +225,7 @@ def sendRequest(url, circID, ssocket, circuit):
     data = relayHeader
     # encrypt relayHeader using shared key(s)
     for x in reversed(HSK):
-      data, nonce = encryptAES(x, data)
-      data = nonce + data
+      data = encryptAES(x, data)
     msg = circID + b'R' + data
     ssocket.send(msg)
     # update digest
