@@ -84,7 +84,6 @@ class Router:
     g = 2
     y = getrandbits(1024)
     hsk = None
-    hdata = None
     circID = None
     nextRouter = None
     nextCircID = None
@@ -100,8 +99,6 @@ class Router:
         gx = int(self.decryptRSA(data))
         sk = pow(gx, y, p)
         hsk = sha256(str(sk).encode())
-        # set digest
-        hdata = hsk
         # calc gy to send back
         gy = pow(g, y, p)
         data = self.padData(509, str(gy).encode())
@@ -119,11 +116,11 @@ class Router:
         cmd = relayHeader[10:11]
         data = relayHeader[11:length+11]
         # check if digest is valid
-        if hdata.digest()[0:6] == digest:
-          # update hdata
-          hdata.update(relayHeader)
+        if hsk.digest()[0:6] == digest:
+          # update hsk
+          hsk.update(relayHeader)
           # execute cmd
-          if cmd == b'E':
+          if cmd == b'X':
             # send create to next router
             router = self.unpadData(data[0:21]).decode()
             ip, port = tuple(router.split(':'))
@@ -142,13 +139,15 @@ class Router:
             gy = self.unpadData(data)
             # create relay message
             streamID = get_random_bytes(2)
-            digest = hdata.digest()[0:6]
+            digest = hsk.digest()[0:6]
             length = len(gy).to_bytes(2, sys.byteorder)
-            relayHeader = streamID + digest + length + b'E' + self.padData(498, gy)
+            relayHeader = streamID + digest + length + b'X' + self.padData(498, gy)
             cipherText = self.encryptAES(hsk, relayHeader)
             # send relay back to connection
             msg = circID + b'R' + cipherText
             connection.send(msg)
+            # update hsk
+            hsk.update(relayHeader)
           elif cmd == b'B':
             url = data.decode()
             # create tcp connection
@@ -158,13 +157,15 @@ class Router:
               print(inst)
             # build msg
             streamID = get_random_bytes(2)
-            digest = hdata.digest()[0:6]
+            digest = hsk.digest()[0:6]
             length = get_random_bytes(2)
             relayHeader = streamID + digest + length + b'C' + self.padData(498, b'')
             cipherText = self.encryptAES(hsk, relayHeader)
             # send relay back to connection
             msg = circID + b'R' + cipherText
             connection.send(msg)
+            # update hsk
+            hsk.update(relayHeader)
           elif cmd == b'D':
             request = self.unpadData(data)
             # send request
@@ -176,13 +177,15 @@ class Router:
               chunk = ready[0].recv(498)
               # create relay message
               streamID = get_random_bytes(2)
-              digest = hdata.digest()[0:6]
+              digest = hsk.digest()[0:6]
               length = (498).to_bytes(2, sys.byteorder)
               relayHeader = streamID + digest + length + b'D' + chunk
               cipherText = self.encryptAES(hsk, relayHeader)
               # send relay back to connection
               msg = circID + b'R' + cipherText
               connection.send(msg)
+              # update hsk
+              hsk.update(relayHeader)
         else:
           # forward to next router
           msg = nextCircID + b'R' + relayHeader

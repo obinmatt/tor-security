@@ -64,7 +64,7 @@ def createCircuit(routers):
   # convert dict to list
   circuit = [(k, v) for k, v in routers.items()]
   # use sample to get random 3 routers from list
-  # circuit = sample(circuit, 3)
+  circuit = sample(circuit, 3)
   # start DH key exchange with first router
   server, port = tuple(circuit[0][0].split(':'))
   ssocket = connectSocket(server, int(port))
@@ -106,7 +106,7 @@ def createCircuit(routers):
     streamID = get_random_bytes(2)
     digest = HSK[0].digest()[0:6]
     length = len(data).to_bytes(2, sys.byteorder)
-    relayHeader = streamID + digest + length + b'E' + paddedData
+    relayHeader = streamID + digest + length + b'X' + paddedData
     # encrypt relayHeader
     cipherText = encryptAES(hsk1, relayHeader)
     # send relay msg
@@ -128,7 +128,9 @@ def createCircuit(routers):
       cmd = relayHeader[10:11]
       data = relayHeader[11:length+11]
       if HSK[0].digest()[0:6] == digest:
-        if cmd == b'E':
+        # update digest
+        HSK[0].update(relayHeader)
+        if cmd == b'X':
           # calc shared key with OR2
           gy2 = data
           sk2 = pow(int(gy2), x2, p)
@@ -150,7 +152,7 @@ def createCircuit(routers):
           streamID = get_random_bytes(2)
           digest = HSK[1].digest()[0:6]
           length = len(data).to_bytes(2, sys.byteorder)
-          relayHeader = streamID + digest + length + b'E' + paddedData
+          relayHeader = streamID + digest + length + b'X' + paddedData
           data = relayHeader
           # encrypt data using shared key(s)
           for x in reversed(HSK):
@@ -175,7 +177,9 @@ def createCircuit(routers):
             cmd = relayHeader[10:11]
             data = relayHeader[11:length+11]
             if HSK[1].digest()[0:6] == digest:
-              if cmd == b'E':
+              # update digest
+              HSK[1].update(relayHeader)
+              if cmd == b'X':
                 # calc shared key with OR3
                 gy3 = data
                 sk3 = pow(int(gy3), x3, p)
@@ -214,7 +218,8 @@ def sendRequest(url, circID, ssocket, circuit):
   cmd = relayHeader[10:11]
   data = relayHeader[11:length+11]
   if HSK[2].digest()[0:6] == digest:
-    if cmd != b'C': exit('Sus')
+    # update digest
+    HSK[2].update(relayHeader)
     data = ('GET / HTTP/1.1\r\nHost: {}\r\n\r\n'.format(url)).encode()
     paddedData = padData(474, data)
     # StreamID + Digest + Len + CMD + DATA
@@ -248,6 +253,8 @@ def sendRequest(url, circID, ssocket, circuit):
       data = relayHeader[11:length+11]
       # append data to list
       response.append(data)
+      # update digest
+      HSK[2].update(relayHeader)
     print(b''.join(response))
   ssocket.close()
   return 
