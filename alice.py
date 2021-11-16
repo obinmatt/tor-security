@@ -262,8 +262,7 @@ def sendRequest(url, circID, ssocket, circuit):
       ready, _, _ = select([ssocket], [], [], len(circuit))
       if not ready: break
       chunk = ready[0].recv(512)
-      msg = unpadData(chunk)
-      relayHeader = msg[3:]
+      relayHeader = chunk[3:]
       # decrypt relayHeader using shared key(s)
       for m in range(len(HSK)):
         relayHeader = decryptAES(HSK[m], NONCE[m], relayHeader)

@@ -183,12 +183,13 @@ class Router:
             while True:
               ready, _, _ = select([nextRouter], [], [], 1)
               if not ready: break
-              chunk = ready[0].recv(498)
+              data = ready[0].recv(498)
               # create relay message
               streamID = get_random_bytes(2)
               digest = hsk.digest()[0:6]
-              length = (498).to_bytes(2, sys.byteorder)
-              relayHeader = streamID + digest + length + b'\x08' + chunk
+              length = len(data).to_bytes(2, sys.byteorder)
+              paddedData = self.padData(498, data)
+              relayHeader = streamID + digest + length + b'\x08' + paddedData
               cipherText = self.encryptAES(hsk, hnonce, relayHeader)
               # send relay back to connection
               msg = circID + b'\x03' + cipherText
