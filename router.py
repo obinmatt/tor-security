@@ -95,6 +95,7 @@ class Router:
       if not msg: break
       cmd = msg[2:3]
       data = msg[3:]
+      # create
       if cmd == b'\x01':
         circID = msg[0:2]
         data = self.unpadData(data)
@@ -113,6 +114,7 @@ class Router:
         connection.send(msg)
         # wait for next msg
         continue
+      # create
       elif cmd == b'\x03':
         # decrypt layer
         relayHeader = self.decryptAES(hsk, hnonce, data)
@@ -126,7 +128,7 @@ class Router:
           # update hsk
           hsk.update(relayHeader)
           hnonce.update(relayHeader)
-          # execute cmd
+          # extend
           if cmd == b'\x04':
             # send create to next router
             nonce = data[0:8]
@@ -157,6 +159,7 @@ class Router:
             connection.send(msg)
             # update hsk
             hsk.update(relayHeader)
+          # begin
           elif cmd == b'\x06':
             url = data.decode()
             # create tcp connection
@@ -175,6 +178,7 @@ class Router:
             connection.send(msg)
             # update hsk
             hsk.update(relayHeader)
+          # data
           elif cmd == b'\x08':
             request = self.unpadData(data)
             # send request
@@ -196,6 +200,21 @@ class Router:
               connection.send(msg)
               # update hsk
               hsk.update(relayHeader)
+          # end
+          elif cmd == b'\x09':
+            # build msg
+            streamID = get_random_bytes(2)
+            digest = hsk.digest()[0:6]
+            length = get_random_bytes(2)
+            relayHeader = streamID + digest + length + b'\x09' + self.padData(498, b'')
+            cipherText = self.encryptAES(hsk, hnonce, relayHeader)
+            # send relay back to connection
+            msg = circID + b'\x03' + cipherText
+            connection.send(msg)
+            # update hsk
+            hsk.update(relayHeader)
+            # close stream
+            nextRouter.close()
         else:
           # forward to next router
           msg = nextCircID + b'\x03' + relayHeader
@@ -214,6 +233,7 @@ class Router:
               connection.send(msg)
       continue
     connection.close()
+    print('Connection closed.')
 
   def listen(self):
     # create server socket

@@ -277,6 +277,104 @@ def sendRequest(url, circID, ssocket, circuit):
         # update digest
         HSK[2].update(relayHeader)
     print(b''.join(response))
+    destroyCircuit(circID, ssocket)
+  return
+
+def destroyCircuit(circID, ssocket):
+  # StreamID + Digest + Len + CMD + DATA
+  streamID = get_random_bytes(2)
+  digest = HSK[2].digest()[0:6]
+  length = get_random_bytes(2)
+  relayHeader = streamID + digest + length + b'\x09' + padData(498, b'')
+  data = relayHeader
+  # encrypt relayHeader using shared key(s)
+  n = 2
+  for x in reversed(HSK):
+    data = encryptAES(x, NONCE[n], data)
+    n = n - 1
+  msg = circID + b'\x03' + data
+  ssocket.send(msg)
+  # update digest
+  HSK[2].update(relayHeader)
+  NONCE[2].update(relayHeader)
+  # recv message
+  msg = ssocket.recv(512)
+  relayHeader = msg[3:]
+  # decrypt relayHeader using shared key(s)
+  for l in range(len(HSK)):
+    relayHeader = decryptAES(HSK[l], NONCE[l], relayHeader)
+  streamID = relayHeader[0:2]
+  digest = relayHeader[2:8]
+  length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+  cmd = relayHeader[10:11]
+  data = relayHeader[11:length+11]
+  if HSK[2].digest()[0:6] == digest:
+    # pop values
+    HSK.pop()
+    NONCE.pop()
+    # StreamID + Digest + Len + CMD + DATA
+    streamID = get_random_bytes(2)
+    digest = HSK[1].digest()[0:6]
+    length = get_random_bytes(2)
+    relayHeader = streamID + digest + length + b'\x09' + padData(498, b'')
+    data = relayHeader
+    # encrypt relayHeader using shared key(s)
+    n = 1
+    for x in reversed(HSK):
+      data = encryptAES(x, NONCE[n], data)
+      n = n - 1
+    msg = circID + b'\x03' + data
+    ssocket.send(msg)
+    # update digest
+    HSK[1].update(relayHeader)
+    NONCE[1].update(relayHeader)
+    # recv message
+    msg = ssocket.recv(512)
+    relayHeader = msg[3:]
+    # decrypt relayHeader using shared key(s)
+    for l in range(len(HSK)):
+      relayHeader = decryptAES(HSK[l], NONCE[l], relayHeader)
+    streamID = relayHeader[0:2]
+    digest = relayHeader[2:8]
+    length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+    cmd = relayHeader[10:11]
+    data = relayHeader[11:length+11]
+    if HSK[1].digest()[0:6] == digest:
+      # pop values
+      HSK.pop()
+      NONCE.pop()
+      # StreamID + Digest + Len + CMD + DATA
+      streamID = get_random_bytes(2)
+      digest = HSK[0].digest()[0:6]
+      length = get_random_bytes(2)
+      relayHeader = streamID + digest + length + b'\x09' + padData(498, b'')
+      data = relayHeader
+      # encrypt relayHeader using shared key(s)
+      n = 0
+      for x in reversed(HSK):
+        data = encryptAES(x, NONCE[n], data)
+        n = n - 1
+      msg = circID + b'\x03' + data
+      ssocket.send(msg)
+      # update digest
+      HSK[0].update(relayHeader)
+      NONCE[0].update(relayHeader)
+      # recv message
+      msg = ssocket.recv(512)
+      relayHeader = msg[3:]
+      # decrypt relayHeader using shared key(s)
+      for l in range(len(HSK)):
+        relayHeader = decryptAES(HSK[l], NONCE[l], relayHeader)
+      streamID = relayHeader[0:2]
+      digest = relayHeader[2:8]
+      length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+      cmd = relayHeader[10:11]
+      data = relayHeader[11:length+11]
+      if HSK[0].digest()[0:6] == digest:
+        # pop values
+        HSK.pop()
+        NONCE.pop()
+        print('Circuit closed.')
   return
 
 def main(url):
