@@ -13,20 +13,23 @@ python3 directory.py
 ```
 ## 3. Start router,py in separate terminal
 ``` bash
-python3 router.py 'localhost' 9001
+python3 router.py localhost 9002
 ```
 
 ## 4. Repeat step 3 for as many hops as you'd like (alice.py is set up to work with three)
 ``` bash
-python3 router.py 'localhost' 9002
-python3 router.py 'localhost' 9003
+python3 router.py localhost 9003
+python3 router.py localhost 9004
 ```
 
-## 5. Start alice.py
+## 5. Start op.py
 ```bash
-python3 alice.py www.google.com/
+python3 op.py localhost 9000
 ```
 
-## 6. Response will be saved in response.html
+## 6. Interact with SOCKS5 server
+```bash
+I used the FoxyProxy extenison on Firefox
+```
 
 ## 7. Done!
