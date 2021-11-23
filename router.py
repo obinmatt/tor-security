@@ -6,7 +6,7 @@ from Crypto.Util import Padding
 from Crypto.Random import get_random_bytes
 from Crypto.Random.random import getrandbits
 from hashlib import sha256
-from threading import Thread
+from threading import Thread, Lock
 from select import select
 
 class Router:
@@ -80,6 +80,10 @@ class Router:
   def unpadData(self, data):
     return data.rstrip(b'\0')
 
+  def closeSockets(self, sockets):
+    for x in sockets:
+      x.close()
+
   def handleClient(self, connection, address):
     print('New connection - {}'.format(address))
     p = 0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485
@@ -93,10 +97,17 @@ class Router:
     sockets = [connection]
     exitRouter = False
     while True:
-      r, w, e = select(sockets, [], [])
+      try:
+        r, w, e = select(sockets, [], [])
+      except ValueError:
+        sockets.remove(nextRouter)
       # -->
       if connection in r:
-        msg = connection.recv(512)
+        try:
+          msg = connection.recv(512)
+        except ConnectionResetError:
+          break
+        # if len(msg) <= 0: continue
         cmd = msg[2:3]
         data = msg[3:]
         # create
@@ -154,12 +165,9 @@ class Router:
               address = data.decode()
               ip, port = tuple(address.split(':'))
               # create tcp connection
-              try:
-                nextRouter = self.connectSocket(ip, int(port))
-                sockets.append(nextRouter)
-                exitRouter = True
-              except Exception as inst:
-                print(inst)
+              nextRouter = self.connectSocket(ip, int(port))
+              sockets.append(nextRouter)
+              exitRouter = True
               # build msg
               streamID = get_random_bytes(2)
               digest = hsk.digest()[0:6]
@@ -185,8 +193,7 @@ class Router:
               # send relay back to connection
               msg = circID + b'\x03' + cipherText
               connection.send(msg)
-              # close stream
-              sockets.remove(nextRouter)
+              # close nextRouter
               nextRouter.close()
           else:
             # forward to next router
@@ -195,7 +202,11 @@ class Router:
       # <--
       if nextRouter in r:
         if exitRouter:
-          msg = nextRouter.recv(498)
+          try:
+            msg = nextRouter.recv(498)
+          except OSError:
+            nextRouter.close()
+            continue
           streamID = get_random_bytes(2)
           digest = hsk.digest()[0:6]
           length = len(msg).to_bytes(2, sys.byteorder)
@@ -206,7 +217,11 @@ class Router:
           msg = circID + b'\x03' + cipherText
           connection.send(msg)
         else:
-          msg = nextRouter.recv(512)
+          try:
+            msg = nextRouter.recv(512)
+          except ConnectionResetError:
+            break
+          # if len(msg) <= 0: continue
           cmd = msg[2:3]
           data = msg[3:]
           # created
@@ -229,8 +244,7 @@ class Router:
             # send relay back to connection
             msg = circID + b'\x03' + cipherText
             connection.send(msg)
-      continue
-    connection.close()
+    self.closeSockets(sockets)
     print('Connection {} closed.'.format(address))
 
   def listen(self):

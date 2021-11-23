@@ -103,7 +103,6 @@ class OP:
     # circuit = sample(circuit, 3)
     # start DH key exchange with first router
     server, port = tuple(circuit[0][0].split(':'))
-    print(server, port)
     ssocket = self.connectSocket(server, int(port))
     # calc gx1
     gx1 = pow(g, x1, p)
@@ -123,8 +122,8 @@ class OP:
     # recv created back
     msg = ssocket.recv(512)
     cmd = msg[2:3]
+    # created
     if cmd == b'\x02':
-      print('Created Recieved')
       data = msg[3:]
       gy1 = int(self.unpadData(data))
       # calc shared key with OR1
@@ -162,8 +161,8 @@ class OP:
       msg = ssocket.recv(512)
       cmd = msg[2:3]
       data = msg[3:]
+      # relay
       if cmd == b'\x03':
-        print('Relay recieved')
         # decrypt data using shared key
         relayHeader = self.decryptAES(hsk[0], nonces[0], data)
         streamID = relayHeader[0:2]
@@ -172,8 +171,7 @@ class OP:
         cmd = relayHeader[10:11]
         data = relayHeader[11:length+11]
         if hsk[0].digest()[0:6] == digest:
-          # update digest
-          # hsk[0].update(relayHeader)
+          # extended
           if cmd == b'\x05':
             # calc shared key with OR2
             gy2 = data
@@ -214,8 +212,8 @@ class OP:
             # recv relay back
             msg = ssocket.recv(512)
             cmd = msg[2:3]
+            # relay
             if cmd == b'\x03':
-              print('Relay recieved')
               relayHeader = msg[3:]
               # decrypt relayHeader using shared key(s)
               for j in range(len(hsk)):
@@ -226,8 +224,7 @@ class OP:
               cmd = relayHeader[10:11]
               data = relayHeader[11:length+11]
               if hsk[1].digest()[0:6] == digest:
-                # update digest
-                # hsk[1].update(relayHeader)
+                # extended
                 if cmd == b'\x05':
                   # calc shared key with OR3
                   gy3 = data
@@ -237,51 +234,151 @@ class OP:
                   hsk.append(hsk3)
     return circID, hsk, nonces, ssocket 
 
+  def destroyCircuit(self, circID, hsk, nonces, ssocket):
+   # StreamID + Digest + Len + CMD + DATA
+   streamID = get_random_bytes(2)
+   digest = hsk[2].digest()[0:6]
+   length = get_random_bytes(2)
+   relayHeader = streamID + digest + length + b'\x09' + self.padData(498, b'')
+   data = relayHeader
+   # encrypt relayHeader using shared key(s)
+   n = 2
+   for x in reversed(hsk):
+     data = self.encryptAES(x, nonces[n], data)
+     n = n - 1
+   msg = circID + b'\x03' + data
+   ssocket.send(msg)
+   # update digest
+   hsk[2].update(relayHeader)
+   nonces[2].update(relayHeader)
+   # recv message
+   msg = ssocket.recv(512)
+   relayHeader = msg[3:]
+   # decrypt relayHeader using shared key(s)
+   for l in range(len(hsk)):
+     relayHeader = self.decryptAES(hsk[l], nonces[l], relayHeader)
+   streamID = relayHeader[0:2]
+   digest = relayHeader[2:8]
+   length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+   cmd = relayHeader[10:11]
+   data = relayHeader[11:length+11]
+   if hsk[2].digest()[0:6] == digest:
+     # pop values
+     hsk.pop()
+     nonces.pop()
+     # StreamID + Digest + Len + CMD + DATA
+     streamID = get_random_bytes(2)
+     digest = hsk[1].digest()[0:6]
+     length = get_random_bytes(2)
+     relayHeader = streamID + digest + length + b'\x09' + self.padData(498, b'')
+     data = relayHeader
+     # encrypt relayHeader using shared key(s)
+     n = 1
+     for x in reversed(hsk):
+       data = self.encryptAES(x, nonces[n], data)
+       n = n - 1
+     msg = circID + b'\x03' + data
+     ssocket.send(msg)
+     # update digest
+     hsk[1].update(relayHeader)
+     nonces[1].update(relayHeader)
+     # recv message
+     msg = ssocket.recv(512)
+     relayHeader = msg[3:]
+     # decrypt relayHeader using shared key(s)
+     for l in range(len(hsk)):
+       relayHeader = self.decryptAES(hsk[l], nonces[l], relayHeader)
+     streamID = relayHeader[0:2]
+     digest = relayHeader[2:8]
+     length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+     cmd = relayHeader[10:11]
+     data = relayHeader[11:length+11]
+     if hsk[1].digest()[0:6] == digest:
+       # pop values
+       hsk.pop()
+       nonces.pop()
+       # StreamID + Digest + Len + CMD + DATA
+       streamID = get_random_bytes(2)
+       digest = hsk[0].digest()[0:6]
+       length = get_random_bytes(2)
+       relayHeader = streamID + digest + length + b'\x09' + self.padData(498, b'')
+       data = relayHeader
+       # encrypt relayHeader using shared key(s)
+       n = 0
+       for x in reversed(hsk):
+         data = self.encryptAES(x, nonces[n], data)
+         n = n - 1
+       msg = circID + b'\x03' + data
+       ssocket.send(msg)
+       # update digest
+       hsk[0].update(relayHeader)
+       nonces[0].update(relayHeader)
+       # recv message
+       msg = ssocket.recv(512)
+       relayHeader = msg[3:]
+       # decrypt relayHeader using shared key(s)
+       for l in range(len(hsk)):
+         relayHeader = self.decryptAES(hsk[l], nonces[l], relayHeader)
+       streamID = relayHeader[0:2]
+       digest = relayHeader[2:8]
+       length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+       cmd = relayHeader[10:11]
+       data = relayHeader[11:length+11]
+       if hsk[0].digest()[0:6] == digest:
+         # pop values
+         hsk.pop()
+         nonces.pop()
+         ssocket.close()
+         print('Circuit closed.')
+
   def exchangeData(self, circID, hsk, nonces, connection, ssocket):
     while True:
       # wait until connection or server is available for read
-      r, _, _ = select([connection, ssocket], [], [])
+      r, w, e = select([connection, ssocket], [], [])
       # from browser
       if connection in r:
-        data = connection.recv(498)
-        paddedData = self.padData(498, data)
-        # StreamID + Digest + Len + CMD + DATA
-        streamID = get_random_bytes(2)
-        digest = hsk[2].digest()[0:6]
-        length = len(data).to_bytes(2, sys.byteorder)
-        relayHeader = streamID + digest + length + b'\x08' + paddedData
-        data = relayHeader
-        # encrypt relayHeader using shared key(s)
-        i = 2
-        for x in reversed(hsk):
-          data = self.encryptAES(x, nonces[i], data)
-          i = i - 1
-        msg = circID + b'\x03' + data
-        # update digest
-        hsk[2].update(relayHeader)
-        nonces[2].update(relayHeader)
-        # send to server
-        if ssocket.send(msg) <= 0:
+        try:
+          data = connection.recv(498)
+          if len(data) <= 0: break
+          paddedData = self.padData(498, data)
+          # StreamID + Digest + Len + CMD + DATA
+          streamID = get_random_bytes(2)
+          digest = hsk[2].digest()[0:6]
+          length = len(data).to_bytes(2, sys.byteorder)
+          relayHeader = streamID + digest + length + b'\x08' + paddedData
+          data = relayHeader
+          # encrypt relayHeader using shared key(s)
+          i = 2
+          for x in reversed(hsk):
+            data = self.encryptAES(x, nonces[i], data)
+            i = i - 1
+          msg = circID + b'\x03' + data
+          # update digest
+          hsk[2].update(relayHeader)
+          nonces[2].update(relayHeader)
+          # send to server
+          ssocket.send(msg)
+        except ConnectionResetError:
           break
       # from server
       if ssocket in r:
-        data = ssocket.recv(512)
-        relayHeader = data[3:]
-        # decrypt relayHeader using shared key(s)
-        for m in range(len(hsk)):
-          relayHeader = self.decryptAES(hsk[m], nonces[m], relayHeader)
-        streamID = relayHeader[0:2]
-        digest = relayHeader[2:8]
-        length = int.from_bytes(relayHeader[8:10], sys.byteorder)
-        cmd = relayHeader[10:11]
-        data = relayHeader[11:length+11]
-        if hsk[2].digest()[0:6] == digest:
-          # update digest
-          # hsk[2].update(relayHeader)
-          # send to browser
-          if connection.send(data) <= 0:
-            break
-    return
+        try:
+          data = ssocket.recv(512)
+          if len(data) <= 0: break
+          relayHeader = data[3:]
+          # decrypt relayHeader using shared key(s)
+          for m in range(len(hsk)):
+            relayHeader = self.decryptAES(hsk[m], nonces[m], relayHeader)
+          streamID = relayHeader[0:2]
+          digest = relayHeader[2:8]
+          length = int.from_bytes(relayHeader[8:10], sys.byteorder)
+          cmd = relayHeader[10:11]
+          data = relayHeader[11:length+11]
+          if hsk[2].digest()[0:6] == digest:
+            # send to browser
+            connection.send(data)
+        except (ConnectionResetError, BrokenPipeError):
+          break
 
   def handleClient(self, connection, address):
     print('New connection - {}'.format(address))
@@ -321,8 +418,8 @@ class OP:
       domainLength = connection.recv(1)[0]
       address = connection.recv(domainLength)
       address = socket.gethostbyname(address)
+    # this one must be big to work
     port = int.from_bytes(connection.recv(2), 'big')
-    print(port)
     # respond
     try:
       if cmd == 1:  # CONNECT
@@ -363,22 +460,25 @@ class OP:
         command = relayHeader[10:11]
         data = relayHeader[11:length+11]
         if hsk[2].digest()[0:6] == digest:
-          # update digest
-          # hsk[2].update(relayHeader)
           print('Connected to {} {}'.format(address, port))
         else:
           connection.close()
+          return
       addr = socket.inet_aton(bindAddress[0])
       port = (bindAddress[1]).to_bytes(2, sys.byteorder)
       msg = (SOCKS_VERSION).to_bytes(1, sys.byteorder) + b'\x00' + b'\x00' + b'\x01' + addr + port
-    except Exception as err:
-      print(err)
+    except Exception:
       connection.close()
+      return
+    # send 
     connection.send(msg)
     # establish data exchange
     if msg[1] == 0 and cmd == 1:
       self.exchangeData(circID, hsk, nonces, connection, ssocket)
+    # destory circuit
+    self.destroyCircuit(circID, hsk, nonces, ssocket)
     # close connection
+    print('Closing connection to {}'.format(address))
     connection.close()
 
   def listen(self):
