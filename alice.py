@@ -67,7 +67,7 @@ def createCircuit(routers):
   # convert dict to list
   circuit = [(k, v) for k, v in routers.items()]
   # use sample to get random 3 routers from list
-  # circuit = sample(circuit, 3)
+  circuit = sample(circuit, 3)
   # start DH key exchange with first router
   server, port = tuple(circuit[0][0].split(':'))
   ssocket = connectSocket(server, int(port))

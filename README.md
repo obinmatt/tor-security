@@ -11,25 +11,25 @@ pip3 install -r /path/to/requirements.txt
 ``` bash
 python3 directory.py
 ```
-## 3. Start router,py in separate terminal
+## 3. Start router.py on a different node or terminal (ensure directory ip and port are correct)
 ``` bash
-python3 router.py localhost 9002
+python3 router.py ip port
 ```
 
-## 4. Repeat step 3 for as many hops as you'd like (alice.py is set up to work with three)
+## 4. Repeat step 3 for as many hops as you'd like (alice.py/op.py is set up to work with three)
 ``` bash
-python3 router.py localhost 9003
-python3 router.py localhost 9004
+python3 router.py ip port
+python3 router.py ip port
 ```
 
 ## 5. Start op.py
 ```bash
-python3 op.py localhost 9000
+python3 op.py localhost port
 ```
 
 ## 6. Interact with SOCKS5 server
 ```bash
-I used the FoxyProxy extenison on Firefox
+I used the FoxyProxy extenison on Firefox, the authentication for the SOCKS5 server is 'username'/'password' (very secure)
 ```
 
 ## 7. Done!
